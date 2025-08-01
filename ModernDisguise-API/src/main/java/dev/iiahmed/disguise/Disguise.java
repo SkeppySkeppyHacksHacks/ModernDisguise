@@ -4,6 +4,7 @@ import org.bukkit.entity.EntityType;
 import org.jetbrains.annotations.ApiStatus;
 
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture; // [추가]
 import java.util.function.Function;
 
 @SuppressWarnings("unused")
@@ -94,8 +95,10 @@ public final class Disguise {
     public static class Builder {
 
         private String name;
-        private Skin skin;
         private Entity entity;
+        // [변경] Skin 객체 대신 CompletableFuture<Skin>을 저장합니다.
+        // 스킨이 설정되지 않은 경우를 대비해 null을 가진 완료된 Future로 초기화합니다.
+        private CompletableFuture<Skin> skinFuture = CompletableFuture.completedFuture(null);
 
         /* we don't allow constructors from outside */
         private Builder() {
@@ -122,34 +125,36 @@ public final class Disguise {
 
         /**
          * @deprecated now that values are generic it's easier for your IDE to use the SkinAPI provided first
-         *
-         * @param value   this is the value required by the skin api
-         * @param api     determines the SkinAPI type
-         * @return the disguise builder
          * @see Disguise.Builder#setSkin(SkinAPI, Object)
          */
         @Deprecated
         @ApiStatus.ScheduledForRemoval
         public <V> Builder setSkin(final V value, final SkinAPI<V> api) {
-            return setSkin(api.of(value));
+            // [변경] SkinAPI가 CompletableFuture를 반환하므로, 이를 skinFuture에 저장합니다.
+            this.skinFuture = api.of(value);
+            return this;
         }
 
         /**
-         * @param value   this is the value required by the skin api
-         * @param api     determines the SkinAPI type
+         * @param value this is the value required by the skin api
+         * @param api   determines the SkinAPI type
          * @return the disguise builder
          */
         public <V> Builder setSkin(final SkinAPI<V> api, final V value) {
-            return setSkin(api.of(value));
+            // [변경] SkinAPI가 CompletableFuture를 반환하므로, 이를 skinFuture에 저장합니다.
+            this.skinFuture = api.of(value);
+            return this;
         }
 
         /**
-         * @param context   this is the context required by the skin api
-         * @param api       determines the SkinAPI type
+         * @param context this is the context required by the skin api
+         * @param api     determines the SkinAPI type
          * @return the disguise builder
          */
         public <V> Builder setSkin(final SkinAPI<V> api, final SkinAPI.Context<V> context) {
-            return setSkin(api.of(context));
+            // [변경] SkinAPI가 CompletableFuture를 반환하므로, 이를 skinFuture에 저장합니다.
+            this.skinFuture = api.of(context);
+            return this;
         }
 
         /**
@@ -167,16 +172,14 @@ public final class Disguise {
          * @return the disguise builder
          */
         public Builder setSkin(final Skin skin) {
-            this.skin = skin;
+            // [변경] 이미 생성된 Skin 객체는 완료된 Future로 감싸서 저장합니다.
+            this.skinFuture = CompletableFuture.completedFuture(skin);
             return this;
         }
 
         /**
          * @deprecated There is now a custom entity system
          * @see #setEntity(Function)
-         *
-         * @param type the entity type the player should look like
-         * @return the disguise builder
          */
         public Builder setEntityType(final EntityType type) {
             this.entity = new Entity.Builder().setType(type).build();
@@ -185,7 +188,7 @@ public final class Disguise {
 
         /**
          * @param entity the entity the player should look like
-         * @return        the disguise builder
+         * @return the disguise builder
          */
         public Builder setEntity(final Entity entity) {
             this.entity = entity;
@@ -194,7 +197,7 @@ public final class Disguise {
 
         /**
          * @param builder the entity builder the player should look like
-         * @return        the disguise builder
+         * @return the disguise builder
          */
         public Builder setEntity(final Function<Entity.Builder, Entity.Builder> builder) {
             this.entity = builder.apply(new Entity.Builder()).build();
@@ -202,10 +205,14 @@ public final class Disguise {
         }
 
         /**
-         * @return a new instance of {@link Disguise} with the collected info
+         * [변경] 메소드 이름이 buildAsync로 변경되고, 반환 타입이 CompletableFuture<Disguise>로 변경되었습니다.
+         * 스킨 정보를 비동기적으로 가져온 후 Disguise 객체를 생성합니다.
+         *
+         * @return a new instance of {@link Disguise} with the collected info, wrapped in a CompletableFuture
          */
-        public Disguise build() {
-            return new Disguise(name, skin, entity);
+        public CompletableFuture<Disguise> build() {
+            // skinFuture가 완료되면(스킨을 가져오면), thenApply 블록이 실행됩니다.
+            return skinFuture.thenApply(resolvedSkin -> new Disguise(name, resolvedSkin, entity));
         }
 
     }
