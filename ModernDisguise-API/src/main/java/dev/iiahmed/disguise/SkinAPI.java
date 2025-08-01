@@ -6,6 +6,7 @@ import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture; // [추가]
 import java.util.function.Function;
 
 /**
@@ -14,9 +15,9 @@ import java.util.function.Function;
  *
  * <p>APIs included by default:</p>
  * <ul>
- *     <li>Mojang API</li>
- *     <li>MineTools API</li>
- *     <li>MineSkin API</li>
+ * <li>Mojang API</li>
+ * <li>MineTools API</li>
+ * <li>MineSkin API</li>
  * </ul>
  *
  * @param <V> the type of the value used for context, typically {@code UUID}
@@ -24,34 +25,38 @@ import java.util.function.Function;
 @SuppressWarnings("unused")
 public class SkinAPI<V> {
 
-    private final Function<Context<V>, Skin> provider;
+    // [변경] 반환 타입이 CompletableFuture<Skin>으로 변경되었습니다.
+    private final Function<Context<V>, CompletableFuture<Skin>> provider;
 
     /**
      * Constructs a new {@code SkinAPI} with the specified provider function.
      *
      * @param provider the function that provides a {@code Skin} given a {@code Context}
      */
-    public SkinAPI(final Function<Context<V>, Skin> provider) {
+    // [변경] 생성자 파라미터 타입이 비동기 함수로 변경되었습니다.
+    public SkinAPI(final Function<Context<V>, CompletableFuture<Skin>> provider) {
         this.provider = provider;
     }
 
     /**
-     * Fetches a {@code Skin} using the specified value.
+     * Fetches a {@code Skin} using the specified value asynchronously.
      *
      * @param value the value used to identify the context, such as a player's {@code UUID}
-     * @return the fetched {@code Skin}
+     * @return a {@code CompletableFuture} that will complete with the fetched {@code Skin}
      */
-    public Skin of(@NotNull final V value) {
+    // [변경] 반환 타입이 CompletableFuture<Skin>으로 변경되었습니다.
+    public CompletableFuture<Skin> of(@NotNull final V value) {
         return provider.apply(() -> value);
     }
 
     /**
-     * Fetches a {@code Skin} using the specified {@code Context}.
+     * Fetches a {@code Skin} using the specified {@code Context} asynchronously.
      *
      * @param context the context used to provide a value for fetching the skin
-     * @return the fetched {@code Skin}
+     * @return a {@code CompletableFuture} that will complete with the fetched {@code Skin}
      */
-    public Skin of(@NotNull final Context<V> context) {
+    // [변경] 반환 타입이 CompletableFuture<Skin>으로 변경되었습니다.
+    public CompletableFuture<Skin> of(@NotNull final Context<V> context) {
         return provider.apply(context);
     }
 
@@ -59,35 +64,40 @@ public class SkinAPI<V> {
      * SkinAPI instance for Mojang's skin service.
      * This API fetches skins from Mojang's official session server.
      */
+    // [변경] DisguiseUtil.getJSONObjectAsync를 호출하고 .thenApply를 통해 결과를 비동기적으로 변환합니다.
     public static final SkinAPI<UUID> MOJANG = new SkinAPI<>(context -> {
-        final String id = context.value().toString();
+        final String id = context.value().toString().replace("-", "");
         final String url = "https://sessionserver.mojang.com/session/minecraft/profile/%uuid%?unsigned=false".replace("%uuid%", id);
-        final JSONObject object = DisguiseUtil.getJSONObject(url);
-        return extractSkinFromJSON(object);
+        return DisguiseUtil.getJSONObjectAsync(url)
+                .thenApply(SkinAPI::extractSkinFromJSON);
     });
 
     /**
      * SkinAPI instance for MineTools skin service.
      * This API fetches skins from the MineTools API, a third-party service.
      */
+    // [변경] 비동기 호출 및 결과 변환
     public static final SkinAPI<UUID> MINETOOLS = new SkinAPI<>(context -> {
-        final String id = context.value().toString();
+        final String id = context.value().toString().replace("-", "");
         final String url = "https://api.minetools.eu/profile/%uuid%".replace("%uuid%", id);
-        final JSONObject object = DisguiseUtil.getJSONObject(url);
-        return extractSkinFromJSON((JSONObject) object.get("raw"));
+        return DisguiseUtil.getJSONObjectAsync(url)
+                .thenApply(object -> extractSkinFromJSON((JSONObject) object.get("raw")));
     });
 
     /**
      * SkinAPI instance for MineSkin skin service.
      * This API fetches skins from the MineSkin API, a third-party service.
      */
+    // [변경] 비동기 호출 및 결과 변환
     public static final SkinAPI<UUID> MINESKIN = new SkinAPI<>(context -> {
         final String id = context.value().toString();
         final String url = "https://api.mineskin.org/get/uuid/%uuid%".replace("%uuid%", id);
-        final JSONObject object = DisguiseUtil.getJSONObject(url);
-        final JSONObject dataObject = (JSONObject) object.get("data");
-        final JSONObject texturesObject = (JSONObject) dataObject.get("texture");
-        return new Skin((String) texturesObject.get("value"), (String) texturesObject.get("signature"));
+        return DisguiseUtil.getJSONObjectAsync(url)
+                .thenApply(object -> {
+                    final JSONObject dataObject = (JSONObject) object.get("data");
+                    final JSONObject texturesObject = (JSONObject) dataObject.get("texture");
+                    return new Skin((String) texturesObject.get("value"), (String) texturesObject.get("signature"));
+                });
     });
 
     /**
@@ -97,6 +107,7 @@ public class SkinAPI<V> {
      * @return the extracted {@code Skin}
      */
     private static Skin extractSkinFromJSON(final JSONObject object) {
+        if (object == null) return new Skin(null, null); // null 체크 추가
         String texture = "", signature = "";
         final JSONArray array = (JSONArray) object.get("properties");
         for (final Object o : array) {
