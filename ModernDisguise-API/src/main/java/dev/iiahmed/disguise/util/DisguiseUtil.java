@@ -17,11 +17,14 @@ import org.json.simple.parser.ParseException;
 
 import javax.net.ssl.HttpsURLConnection;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.*;
+import java.util.concurrent.CompletableFuture; // [추가]
+import java.util.concurrent.ConcurrentHashMap; // [추가]
 import java.util.logging.Level;
 
 @SuppressWarnings({"unchecked", "rawtypes"})
@@ -39,6 +42,9 @@ public final class DisguiseUtil {
 
     private static final Method GET_PROFILE, GET_HANDLE;
     private static final Map PLAYERS_MAP;
+
+    // [추가] 네트워크 요청 결과를 캐싱하기 위한 맵
+    private static final Map<String, CompletableFuture<JSONObject>> SESSIONS_CACHE = new ConcurrentHashMap<>();
 
     static {
         final boolean obf = Version.isOrOver(17);
@@ -126,7 +132,7 @@ public final class DisguiseUtil {
     /**
      * Registers a name as an online player to disallow {@link Player}s to register as
      *
-     * @param name the registered name
+     * @param name   the registered name
      * @param player the registered player
      */
     public static void register(@NotNull final String name, @NotNull final Player player) {
@@ -198,34 +204,37 @@ public final class DisguiseUtil {
     }
 
     /**
-     * @return the parsed {@link JSONObject} of the URL input
+     * [변경] URL의 JSONObject를 비동기적으로 파싱하여 반환합니다.
+     * 캐싱을 통해 중복된 네트워크 요청을 방지합니다.
+     *
+     * @return a {@link CompletableFuture} containing the parsed {@link JSONObject}
      */
-    public static JSONObject getJSONObject(@NotNull final String urlString) {
-        try {
-            final Scanner scanner = getScanner(urlString);
-            final StringBuilder builder = new StringBuilder();
-            while (scanner.hasNext()) {
-                builder.append(scanner.next());
+    public static CompletableFuture<JSONObject> getJSONObjectAsync(@NotNull final String urlString) {
+        return SESSIONS_CACHE.computeIfAbsent(urlString, url -> CompletableFuture.supplyAsync(() -> {
+            try {
+                HttpsURLConnection connection = (HttpsURLConnection) new URL(url).openConnection();
+                connection.setRequestProperty("User-Agent", "ModernDisguiseAPI/v1.0");
+                connection.setRequestMethod("GET");
+
+                if (connection.getResponseCode() != 200) {
+                    throw new IOException("HTTP " + connection.getResponseCode() + ": The used URL doesn't seem to be working. " + urlString);
+                }
+
+                try (InputStreamReader reader = new InputStreamReader(connection.getInputStream())) {
+                    return (JSONObject) new JSONParser().parse(reader);
+                }
+            } catch (IOException | ParseException e) {
+                throw new RuntimeException("Failed to fetch or parse JSON from URL", e);
             }
-
-            return (JSONObject) new JSONParser().parse(builder.toString());
-        } catch (final IOException | ParseException exception) {
-            throw new RuntimeException("Failed to Scan/Parse the URL", exception);
-        }
+        }));
     }
 
-    private static @NotNull Scanner getScanner(@NotNull String urlString) throws IOException {
-        final URL url = new URL(urlString);
-        final HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
-        connection.setRequestProperty("User-Agent", "ModernDisguiseAPI/v1.0");
-        connection.setRequestMethod("GET");
-        connection.connect();
-        if (connection.getResponseCode() != 200) {
-            throw new RuntimeException("The used URL doesn't seem to be working (the api is down?) " + urlString);
-        }
-
-        return new Scanner(url.openStream());
-    }
+    /*
+     * [삭제] 기존의 동기 방식 메소드는 더 이상 사용하지 않으므로 삭제하거나 private으로 변경합니다.
+     * 여기서는 getJSONObjectAsync 내부에 로직을 통합하여 삭제했습니다.
+     * public static JSONObject getJSONObject(@NotNull final String urlString) { ... }
+     * private static @NotNull Scanner getScanner(@NotNull String urlString) throws IOException { ... }
+     */
 
     /**
      * @return the {@link Skin} of the given {@link Player}
